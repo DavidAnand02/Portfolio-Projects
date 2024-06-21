@@ -1,0 +1,1723 @@
+---
+title: "DS202W Sum 3 Q2"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(dplyr) 
+library(viridis)
+library(tidytext)
+library(tidygraph)
+library(textdata)
+library(textTinyR)
+library(tidyr)
+library(vip)
+```
+
+```{r}
+
+```
+
+```{r}
+library(quanteda)
+library(quanteda.textstats)
+library(quanteda.textplots)
+library(quanteda.textmodels)
+library(ggplot2)
+library(igraph)
+library(widyr)
+library(ggraph)
+library(stringr)
+library(stringdist)
+```
+
+```{r}
+
+```
+
+## Part 1 - Data Exploration, Manipulation & Feature Engineering
+
+The task requires me to create a model that predicts the ranking of a post using 2 classes: top and controversial. This requires a binary classification model which have plenty of picks from the supervised models we learnt. The steps I will take are as follows:
+
+Performing a left join on posts with comments, using the post_id column. This allows me to merge both datasets without creating many more rows of data for every comment that a post received. Using another kind of join would result in a needlessly large dataset that would be computationally expensive and slow to train, fit and evaluate.
+
+```{r}
+
+# Read comments and posts datasets
+comments <- read.csv("C:/Users/David Moraes/Downloads/reddit_data/reddit_comments_16_03_2023__15_03_2023.csv")
+posts <- read.csv("C:/Users/David Moraes/Downloads/reddit_data/reddit_posts_16_03_2023__15_03_2023.csv")
+
+# Merge comments into posts dataset
+combined_data <- posts %>%
+  left_join(comments, by = "post_id")
+
+
+
+# Check the structure of the combined dataset
+str(combined_data)
+
+#If a variable ends in .y it refers to comments and .x refers to posts. Applicable for variables like upvotes (ups)
+```
+
+```{r}
+
+# Summarize numerical variables
+summarized_comments <- comments %>%
+  group_by(post_id) %>%
+  summarize(
+    all_comments = paste(body, collapse = " "),
+    avg_gilded = mean(gilded),
+    total_ups = sum(ups),
+    avg_num_reports = mean(num_reports, na.rm = TRUE)  # Remove NA values if any
+  )
+
+# Count unique authors
+author_counts <- comments %>%
+  group_by(post_id) %>%
+  summarize(unique_authors = n_distinct(author))
+
+# Concatenate permalink and created_utc
+permalink_created_utc <- comments %>%
+  group_by(post_id) %>%
+  summarize(
+    all_permalink = paste(permalink, collapse = "; "),  # Using ";" as separator
+    all_created_utc = paste(created_utc, collapse = "; ")  # Using ";" as separator
+  )
+
+# Merge summarized variables into the posts data frame
+combined_data <- left_join(posts, summarized_comments, by = "post_id") %>%
+  left_join(author_counts, by = "post_id") %>%
+  left_join(permalink_created_utc, by = "post_id")
+
+#If a variable starts with all like all_permalinks it refers to all the perma links of the comments. In the case of numerical vaues, those were just summed or averaged.
+```
+
+```{r}
+combined_data$ranking_type <- factor(combined_data$ranking_type, levels=c("controversial", "top"))
+```
+
+```{r}
+combined_data <- combined_data %>% mutate(across(where(is.character), as.factor))
+```
+
+```{r}
+#Some feature engineering to get the down votes for a post based of the definitions provided
+
+combined_data <- combined_data %>%
+  mutate(downs = ups / upvote_ratio)
+
+View(combined_data)
+```
+
+```{r}
+
+# View column names of the combined dataset
+print(names(combined_data))
+
+```
+
+## Part 1 - Data Splitting
+
+After creating my dataset which should have both top and controversial posts, I used an 80/20 split on the dataset into a training and test set respectively. I made a logistic regression model as a baseline which would serve to give me a sense of what results to expect in evaluation. Then I settled on a final tree based model (random forest) to make up for the weaknesses of logistic regression and address the challenges it could not.
+
+```{r}
+set.seed(23007)
+
+dataset_split <- combined_data %>% initial_split(prop = 0.80)
+
+
+df_train <- training(dataset_split)
+
+df_test <- testing(dataset_split)
+```
+
+```{r}
+
+# Check the levels of the ranking_type variable
+levels(df_test$ranking_type)
+
+#Shows top is the second event level
+```
+
+```{r}
+
+```
+
+## Part 1 - Logistic Regression for Classification
+
+I first used the logistic regression model as a baseline. It seemed suitable because its coefficients tell me the influence each feature has on the log odds outcome, making it easy to interpret. Also its robust to noise and if it performs well then that would tell me there are linear relations to be captured. And if it didn’t perform well that would tell me to use a model that can handle complex non-linear data. This was so I could get a sense of what kind of results to expect in evaluation and how to proceed from there. This model was made using the tidymodels package which enabled me to create a recipe for the work flow using the training data set. The recipe used ranking_type as the target variable and for predictors I choose post_hint, ups, upvote ratio and num_comments. Combined, these predictors reflect some information about the posts and comments and seemed appropriate as a starter model.
+
+This included my data pre-processing steps. These steps involved the zero and near zero variance filters to remove variables like (over-18, is_original_content and edited) with constant values that wouldn’t give the model much useful information. Then I imputed missing values, in case there were any and used step_normalise so that all numeric predictors were on the same scale for mean and varaince. Finally, i removed highly correlated numeric variables which might cause multi-collinearity issues. This involved things like misinterpreting how important certain variables are which can lead to inaccurate model coefficients and a loss of predictive power for the model.
+
+```{r}
+set.seed(23007)
+
+log_reg_recipe <- 
+    recipe(ranking_type ~  post_hint + ups + upvote_ratio, data = df_train) %>% 
+  
+    step_zv(all_predictors()) %>% 
+    step_nzv(all_predictors()) %>%
+
+#  Handle Missing Values
+  step_impute_median(all_numeric(), -all_outcomes()) %>%
+  
+  #  Scale Numeric Variables
+  step_normalize(all_numeric(), -all_outcomes()) %>%
+  
+  #  Remove Highly Correlated Predictors
+  step_corr(all_numeric(), -all_outcomes(), threshold = 0.9) 
+    
+
+summary(log_reg_recipe)
+```
+
+After setting the recipe, I set my specification to logistic regression and defined a workflow that I then fitted the workflow to resampled training data to see how well it performs on it. This was done using the resampled function with 10 folds and the collect metrics function. On average out of 10 folds being evaluated on the training data its mean roc auc value was .0.4675385 which is poor and suggests that it struggles to find any meaningful patterns in the data.
+
+```{r}
+set.seed(23007)
+
+#Baseline Logistic Regrssion
+
+log_rec_specification <-    logistic_reg() %>% 
+    set_engine("glm") %>% 
+   set_mode("classification")
+
+log_reg_wf <-
+    workflow() %>%
+    add_recipe(log_reg_recipe) %>%
+    add_model(log_rec_specification)
+
+#The default family being binomial seems appropriate because we wnat a model that will predict binary outcomes.
+```
+
+```{r}
+#Will use these folds for cross validation for both models
+set.seed(23007)
+
+folds <- vfold_cv(df_train, v = 10)
+
+folds
+```
+
+```{r}
+set.seed(23007)
+
+cv_results <- log_reg_wf %>% fit_resamples(folds, metrics = metric_set(roc_auc))
+
+cv_results %>% collect_metrics()
+```
+
+```{r}
+set.seed(23007)
+
+log_reg_fit <- log_reg_wf %>% fit(data = df_train
+                                  )
+log_reg_model <- log_reg_fit %>% extract_fit_parsnip()
+
+```
+
+The model was then evaluated on the test data and as expected performed slightly worse with a roc auc value of 0.4332399. All the predictions made were for top posts and none for controversial. This suggested a class imbalance but this result stayed the same even after using stratified sampling in the data splitting process. I confirmed this by checking the data sets and could see that top and controversial posts were roughly even in all the data sets. This pointed to the feature selection being heavily biased to top posts. However, several combinations of numerical and categorical data (which were turned into factors) resulted in the same issue. I settled on the linear relations assumption of the model simply being inadequate to address the underlying patterns in the reddit data.
+
+```{r}
+#confusion matrix
+set.seed(23007)
+
+log_reg_model %>% 
+    augment(new_data =  df_test) %>%
+    conf_mat(truth=ranking_type, estimate=.pred_class)
+
+```
+
+Predictions are not available for the controversial label so values like precision, recall and f measure can't be found.
+
+```{r}
+set.seed(23007)
+
+predictions <- log_reg_model %>% 
+    augment(new_data =  df_test)
+
+View(predictions)
+```
+
+```{r}
+set.seed(23007)
+
+log_reg_fit_model <- log_reg_fit %>% augment(new_data = df_test) %>% roc_auc(truth = ranking_type, .pred_top, event_level="second")
+
+log_reg_fit_model
+```
+
+```{r}
+set.seed(23007)
+
+log_reg_model %>% augment( new_data = df_test) %>%
+    conf_mat(truth=ranking_type, estimate=.pred_class)  %>%
+    summary(estimator="binary", event_level="second")
+```
+
+```{r}
+#Observe Coefficients
+
+log_reg_model
+
+coefficients <- tidy(log_reg_model)
+coefficients
+```
+
+Logistic Regression Model Interpretation:
+
+Coefficients:
+
+The baseline’s probability of being top is positive evident from the positive intercept of 0.17. The coefficients tell a different story. All post_hint’s have negative influence, i.e they would influence the model to predict controversial. But their standard errors are all larger than the magnitude of the coefficient estimates. That means while the estimates are negative they could be wrong and be positive as well. This is unreliable and may be because of the high variability of the data and the models inability to capture complex relations that are non-linear.
+
+Engagement metrics like ups and upvote_ratio would be expected to have a positive influence on whether a model is top or controversial and we see they are positive but small values like 0.05, 0.04 respectively. Regardless, we can see that all these variables are not making significant contributions because their p values are all very far above 0.05.
+
+The results of the coefficients would suggest that many or most predictions would be controversial but this don’t seem to match with the predictions shown in the confusion matrix. As all predictions were top there must be patterns that a logistic regression model can’t pick up on.
+
+AIC as well as Null and residual deviance are both well above 2000 which are very high values. These values tell us whether the models fit is good, first with just the intercept and then including predictors. Based of these deviance values it is evident that the models fit is terrible and adding the explanatory values doesn’t help at all. AIC would be useful if we were comparing this logistic regression model to similar models.
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## Part 1 - Random Forest for Classification
+
+I first performed the random forest model without hyperparameter tuning to get a sense of what kind of results I could get using default values or simple parameter values. My random forest recipe hardly required any pre-processing steps because they are naturally robust to outliers and differences in predictors scale of values. They can also capture non linear relations and have their own ability to estimate the importance of features. My pre-processing steps were to just fill in missing values and remove troublesome features that weren’t related to ranking_type. This included all_comments because it would have been computationally expensive to end up with many columns of factors even though random forests could handle high-dim data.
+
+Afters this followed the same tidy models approach of having defined the specification and workflow. This was then evaluated on the training set using 10 folds and ended up with a poor performance on roc auc of 0.4760973. It then fitted on the train data and evaluated on the test data which resulted in a roc auc of 0.9013612 with a good set of classifications as well.
+
+```{r}
+#Now using Random Forests
+set.seed(23007)
+
+rf_recipe <- 
+    recipe(ranking_type ~ ., data = df_train) %>% step_impute_median(all_numeric(), -all_outcomes()) %>% step_rm(all_comments, avg_num_reports, all_permalink, all_created_utc, avg_gilded, total_ups, unique_authors)
+
+```
+
+```{r}
+set.seed(23007)
+
+rf_specification <-
+  rand_forest(trees = 1000) %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("classification")
+
+rf_wf <-
+    workflow() %>%
+    add_recipe(rf_recipe) %>%
+    add_model(rf_specification)
+```
+
+```{r}
+#collect metrics on performance on each fold
+set.seed(23007)
+
+cv_rf_results <- rf_wf %>% fit_resamples(folds, metrics = metric_set(roc_auc))
+
+cv_results %>% collect_metrics()
+```
+
+```{r}
+set.seed(23007)
+
+rf_fit <- rf_wf %>% fit(data = df_train
+                                  )
+rf_model <- rf_fit %>% extract_fit_parsnip()
+```
+
+```{r}
+#confusion matrix
+set.seed(23007)
+
+rf_model %>% 
+
+    augment(new_data =  df_test) %>%
+
+    conf_mat(truth=ranking_type, estimate=.pred_class) 
+```
+
+Precision for label top is -\> 159/(159 +40) = 0.798 = 0.8
+
+Recall for top is -\> 159/(159 +35) = 0.819 = 0.82
+
+F-measure -\> 2\*((precision\*recall)/(precision + recall))
+
+-\> 2\*(0.8\*0.82)/(0.8+0.82) =0.809 = 0.81
+
+F measure is a good balance of recall and precision and this score even without hyper parameter tuning is already good.
+
+```{r}
+
+```
+
+```{r}
+set.seed(23007)
+
+predictions <- rf_model %>% 
+    augment(new_data =  df_test)
+
+View(predictions)
+
+```
+
+```{r}
+set.seed(23007)
+
+rf_fit_model <- rf_fit %>% augment(new_data = df_test) %>% roc_auc(truth = ranking_type, .pred_top, event_level="second")
+
+rf_fit_model
+```
+
+```{r}
+set.seed(23007)
+
+rf_model %>% augment( new_data = df_test) %>%
+    conf_mat(truth=ranking_type, estimate=.pred_class)
+```
+
+```{r}
+
+```
+
+```{r}
+set.seed(23007)
+
+rf_model %>% augment( new_data = df_test) %>%
+    conf_mat(truth=ranking_type, estimate=.pred_class)  %>%
+    summary(estimator="binary", event_level="second")
+```
+
+```{r}
+set.seed(23007)
+# Check the levels of 'ranking_type' 
+levels(predictions$ranking_type)
+
+```
+
+```{r}
+vip::vip(rf_model)
+```
+
+```{r}
+
+```
+
+## Part 1 - Random Forrest with Hyper-parameter Tuning
+
+Then I performed hyper-parameter tuning using the grid_regular and tune_grid to find the best values for trees() and min_n(). This could have included mtry() as well but I though it may make my computer slow again. I then used select best function to find the best values for my chosen metric of accuracy. I then made some line plots to visualise which values of trees and min_n contributed to getting high accuracy and roc auc values.
+
+After finding my ideal parameter valves I fitted my final model and workflow and evaluated its performance of the test set. It resulted in high accuracy and roc auc values of 0.8400000 and 0.9224302 respectively.
+
+```{r}
+set.seed(23007)
+
+rf_tune_spec <- 
+  rand_forest(min_n = tune(),trees = tune()) %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("classification")
+
+rf_tune_wf <-
+    workflow() %>%
+    add_recipe(rf_recipe) %>%
+    add_model(rf_tune_spec)
+```
+
+```{r}
+set.seed(23007)
+
+tree_grid_trial <- grid_regular(trees(),
+                          min_n(),
+                          levels = 5)
+```
+
+```{r}
+set.seed(23007)
+
+rf_tune_results <- 
+  rf_tune_wf %>% 
+  tune_grid(
+    resamples = folds,
+    grid = tree_grid_trial
+    )
+
+View(rf_tune_results)
+```
+
+```{r}
+set.seed(23007)
+
+rf_tune_results %>% 
+  collect_metrics()
+```
+
+```{r}
+set.seed(23007)
+
+best_rf <- rf_tune_results %>%
+  select_best(metric = "accuracy")
+
+best_rf
+```
+
+```{r}
+set.seed(23007)
+
+rf_tune_results %>%
+  collect_metrics() %>%
+  mutate(trees = factor(trees)) %>%
+  ggplot(aes(min_n, mean, color = trees)) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  scale_x_log10(labels = scales::label_number()) +
+  scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
+```
+
+```{r}
+
+```
+
+## Part 1 - Final Workflow and Fit
+
+```{r}
+#From here its about finalising the workflow and fit
+set.seed(23007)
+
+final_rf_wf <- 
+  rf_tune_wf %>% 
+  finalize_workflow(best_rf)
+
+final_rf_wf
+```
+
+```{r}
+set.seed(23007)
+
+final_rf_fit <- 
+  final_rf_wf %>%
+  last_fit(dataset_split) 
+
+final_rf_fit %>%
+  collect_metrics()
+
+```
+
+```{r}
+set.seed(23007)
+
+final_rf_model <- final_rf_fit %>% extract_fit_parsnip()
+
+```
+
+```{r}
+set.seed(23007)
+
+final_rf_model %>% 
+
+    augment(new_data =  df_test) %>%
+
+    conf_mat(truth=ranking_type, estimate=.pred_class) 
+```
+
+For the final random forest the precision, recall and f-measure are:
+
+precision -\> 164/(164 + 34) = 0.82
+
+recall -\> 164/(164 + 30) = 0.845 = 0.85
+
+F-measure = 2\*(0.82\*0.85)/(0.82 + 0.85) = 0.834 = 0.83
+
+All these final values are marginally better than the random forest without hyperparameter tuning.
+
+```{r}
+set.seed(23007)
+
+final_rf_model %>% 
+
+    augment(new_data =  df_test) %>%
+
+    conf_mat(truth=ranking_type, estimate=.pred_class) %>% summary()
+```
+
+```{r}
+
+```
+
+```{r}
+# Visualize variable importance
+vip::vip(final_rf_model)
+```
+
+Interpretation:
+
+Random forests are generally harder to interpret but because we are using it for binary classification we can rely on typical classification measures to determine how well the model is performing.
+
+For all models the classifications were plotted on a confusion matrix and precision, recall and f-measure were calculated. The final random forest did have the best of all these values compared with the random forest with no hyperparameter tuning.
+
+The top 3 most important features remained the same before and after tuning hyperparameters. Those were subreddit subscribers, permalink and subreddit. All these 3 are related to specific subreddits which have their own rules, norms and archetypes. Depending on the subreddit and the number of members, the engagement metrics can reflect more contentious views.
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## Part 2 - Exploring & Manipulating Data Set
+
+Made a dataset called unique_title_com_id_df which should only have post_id’s and titles + comments from each of the original posts. This table disregard a posts rankng type. As I intend to find the similarity between the textual data between the posts. To do this I used the cosine similarity measure.
+
+It works by placing our posts title+comments in a multidimensional space as vectors. Each token is represented as a dimension and the vector occupies more dimensions as it has more terms. The angle between pairs of these vectors is found in multidimensional space and vectors which are closer together share more terms and so are more similar. The cosine value of the angle is used to scale all the values to -1 and 1 for easy comparison.
+
+```{r}
+post_comment_data <- read.csv("C:/Users/David Moraes/Downloads/combined_data_3.csv")
+```
+
+```{r}
+
+corp_reddit <- quanteda::corpus(post_comment_data, text_field="title")
+quanteda::docnames(corp_reddit) <- post_comment_data$post_id
+
+corp_reddit
+```
+
+```{r}
+# Count the number of unique subreddits
+num_unique_subreddits <- length(unique(post_comment_data$subreddit))
+
+# Print the number of unique subreddits
+print(num_unique_subreddits)
+```
+
+```{r}
+plot_df <- summary(corp_reddit) %>% select(Text, Types, Tokens, Sentences)
+
+g <- (
+  ggplot(plot_df, aes(x=Tokens))
+  + geom_bar(fill="#C63C4A")
+  
+  + labs(x="Number of Tokens",
+         y="Count",
+         title="How many tokens are used to describe the titles?",
+         caption="Figure 1. Distribution of\ntokens in the corpus")
+  
+  + scale_y_continuous(breaks=seq(0, 10+2, 2), limits=c(0, 10))
+  
+  # Prettify plot a bit
+  + theme_bw()
+  + theme(plot.title=element_text(size=rel(1.5)),
+          plot.subtitle = element_text(size=rel(1.2)),
+          axis.title=element_text(size=rel(1.3)),
+          axis.title.x=element_text(margin=margin(t=10)),
+          axis.title.y=element_text(margin=margin(r=10)),
+          axis.text=element_text(size=rel(1.25)))
+)
+
+g
+
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+
+title_data <- post_comment_data$title
+
+# Create a data frame with one column named 'title'
+title_df <- data.frame(title = title_data)
+
+# View the structure of the created data frame
+View(title_df)
+
+
+```
+
+```{r}
+
+comments_data <-  post_comment_data$all_comments
+
+comments_df <- data.frame(comments = comments_data)
+
+View(comments_df)
+
+
+```
+
+```{r}
+
+# Combine data frames
+title_com_df <- bind_cols(title_df, comments_df)
+
+# Combine text from both columns into a single column
+title_com_df <- title_com_df %>%
+  mutate(title_comments = paste(title, comments, sep = " "))
+
+# Select only the combined text column
+title_com_df <- title_com_df %>%
+  select(title_comments)
+
+# Print combined dataframe
+head(title_com_df)
+
+```
+
+```{r}
+#Adding post_id column as well in case I need it
+
+post_id_df <- data.frame(post_id = post_comment_data$post_id)
+
+title_com_id_df <- bind_cols(title_com_df, post_id_df)
+
+#And remove duplicate values
+
+unique_title_com_id_df <- title_com_id_df %>%
+  distinct() %>%
+  na.omit() %>%
+  mutate(title_comments = str_replace_all(title_comments, "[[:punct:]]", ""))
+
+View(unique_title_com_id_df)
+```
+
+```{r}
+
+
+```
+
+## Part 2 - Similarity Measure & Function
+
+I defined a cosine similarity function using the following function:
+
+\text{Cosine Similarity} = \frac{{\mathbf{A} \cdot \mathbf{B}}}{{\|\mathbf{A}\| \|\mathbf{B}\|}} = \frac{{\sum_{i=1}^{n} A_i \times B_i}}{{\sqrt{\sum_{i=1}^{n} (A_i)^2} \times \sqrt{\sum_{i=1}^{n} (B_i)^2}}}
+
+It works by taking the text data of a pair of posts and tokenising them so that they are in discrete units which are easier to perform analysis on. Some pre-processing steps were applied to remove punctuation and make letters lowercase so that the text is consistent. All the tokens are collected to give us a bag of words representation of all the tokens across all the posts. This way the frequency of words can be summed and applied to the cosine similarity function.
+
+```{r}
+
+```
+
+```{r}
+# Function to calculate cosine similarity between two vectors
+cosine_similarity <- function(x, y) {
+  dot_product <- sum(x * y)
+  magnitude_x <- sqrt(sum(x^2))
+  magnitude_y <- sqrt(sum(y^2))
+  
+  similarity <- dot_product / (magnitude_x * magnitude_y)
+  
+  return(similarity)
+}
+
+# Function to calculate cosine similarity between two posts
+calculate_post_similarity <- function(post_id1, post_id2, data) {
+  # Extract text data for the two posts
+  text1 <- data$text[data$post_id == post_id1]
+  text2 <- data$text[data$post_id == post_id2]
+  
+  # Check if both texts are available
+  if (length(text1) == 0 || length(text2) == 0) {
+    return(NA)  # Return NA if any text is missing
+  }
+  
+  # Tokenize and preprocess the texts
+  tokens1 <- tolower(unlist(strsplit(text1, "\\s+")))
+  tokens2 <- tolower(unlist(strsplit(text2, "\\s+")))
+  
+  # Create a vocabulary
+  vocabulary <- unique(c(tokens1, tokens2))
+  
+  # Create term frequency vectors for each text
+  tf1 <- table(factor(tokens1, levels = vocabulary))
+  tf2 <- table(factor(tokens2, levels = vocabulary))
+  
+  # Compute cosine similarity
+  similarity <- cosine_similarity(tf1, tf2)
+  
+  return(similarity)
+}
+
+```
+
+2 examples were laid out. 1 allows us to check for the similarity between any 2 specific post_id’s and the other allows us to see the similarity for a large number of posts and have their values plotted on a heatmap.
+
+```{r}
+
+# Testing similarity function on specific pair of posts
+adj_unique_title_com_id_df <- unique_title_com_id_df %>%
+  rename(text = title_comments)
+
+similarity <- calculate_post_similarity("13tdgjo", "11wta7a", adj_unique_title_com_id_df)
+print(paste("Cosine similarity between the posts:", similarity))
+
+```
+
+```{r}
+# Sample a smaller subset of the original data frame
+sample_size <- 8  # Adjust the sample size as needed
+sampled_df <- adj_unique_title_com_id_df %>%
+  sample_n(sample_size)
+
+# Initialize an empty matrix to store similarities
+n <- nrow(sampled_df)
+similarity_matrix <- matrix(NA, nrow = n, ncol = n)
+rownames(similarity_matrix) <- sampled_df$post_id
+colnames(similarity_matrix) <- sampled_df$post_id
+
+# Loop through all pairs of post IDs
+for (i in 1:n) {
+  for (j in 1:n) {
+    # Calculate similarity for each pair
+    similarity_matrix[i, j] <- calculate_post_similarity(sampled_df$post_id[i],
+                                                          sampled_df$post_id[j],
+                                                          sampled_df)
+  }
+}
+
+# Convert the matrix to a data frame for easier manipulation
+similarity_df <- as.data.frame(similarity_matrix)
+
+```
+
+```{r}
+similarity_df
+```
+
+```{r}
+
+# Convert the similarity data frame to a numeric matrix
+similarity_matrix <- as.matrix(similarity_df)
+
+# Plot heatmap with Viridis color palette
+heatmap(similarity_matrix, 
+        Rowv = NA, Colv = NA,
+        col = viridis(256),         # Viridis color palette
+        scale = "column",           # Scale by column
+        margins = c(5, 10),         # Set margins
+        main = "Similarity Matrix Heatmap",  # Title
+        xlab = "",          # X-axis label
+        ylab = "Post IDs",          # Y-axis label
+        cex.main = 1.5,             # Title font size
+        cex.axis = 0.8,             # Axis font size
+        cex.lab = 0.8)              # Label font size
+```
+
+Some improvements for this graph could include having bi-grams represent each post_id as a shortened topic title. Also have a scale of the values in the plot would make it easier to know whats relatively high and low. For now I can say that looking at the similarity dataframe earlier. Values in the 70's seem to be high in similarity, 60's seems to be most common and 50's seems to indicate low similarity. Actually, since these values are all between 0-1 that would suggest they are all quiet similar. But again that doesn't account for the order of words of the semantic meaning of them.
+
+Cosine similarity is scale invariant so isn’t negatively impacted by vectors having different magnitude. For similar topics from similar sources it may appropriately determine the similarity of posts but it ignore the order of words which means it doesn't consider the semantic meaning of posts. So while posts may be similar in terms of word frequency they may not be similar in sentiment.
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## 
+
+## Part 2 - Bi-gram Correlations
+
+The cosine similarity model is what I am locking in but as a side exploration I wanted to see if there was any pattern to the bigram or trigrams of all the posts. Also wanted to check if there was any correlation between the words used in all the posts. While I couldn't flesh this out enough to be a second approach I left it in a little side exploration.
+
+I also wanted to try and find the similarity between trigrams for each post using word correlations. But the correlation values seemed mostly low for a lot of them. Also as a note while the variables names are called bigram, they refere to trigram's currently because I changed n = 3. This could simply be changed back to 2 or any other number of tokens.
+
+```{r}
+
+```
+
+```{r}
+
+
+
+```
+
+```{r}
+reddit_bigrams <- unique_title_com_id_df %>%
+  unnest_tokens(bigram, title_comments, token = "ngrams", n = 3) %>%
+  filter(!is.na(bigram))
+
+View(reddit_bigrams)
+```
+
+```{r}
+reddit_bigrams %>%
+  count( bigram, sort = TRUE) %>% head()
+```
+
+```{r}
+
+
+bigrams_reddit_separated <- reddit_bigrams %>%
+  separate(bigram, c("word1", "word2", "word3"), sep = " ")
+
+bigrams_reddit_filtered <- bigrams_reddit_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  filter(!word3 %in% stop_words$word)
+
+# new bigram counts:
+bigram_reddit_counts <- bigrams_reddit_filtered %>% 
+  count(word1, word2, word3, sort = TRUE)
+
+View(bigram_reddit_counts)
+```
+
+```{r}
+bigrams_reddit_united <- bigrams_reddit_filtered %>%
+  unite(bigram, word1, word2, word3, sep = " ")
+
+View(bigrams_reddit_united)
+
+
+```
+
+```{r}
+bigrams_reddit_united %>%
+  count( bigram, sort = TRUE) %>% head()
+```
+
+```{r}
+
+```
+
+```{r}
+bigrams_reddit_separated %>%
+  filter(word1 == "not") %>%
+  count(word1, word2, word3, sort = TRUE) %>% head()
+```
+
+```{r}
+
+```
+
+```{r}
+# filter out rare combinations, select the first 20 rows
+ 
+
+bigrams_red_sep_fil <- bigrams_reddit_separated %>%
+  select(2:3) %>%
+  slice_head(n = 50)
+
+```
+
+```{r}
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+bigrams_red_sep_fil %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "kk") +  # Kamada-Kawai layout
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE, arrow = grid::arrow(type = "closed", length = unit(.15, "inches"))) +
+  geom_node_point(color = "lightblue", size = 3) +  # Decreased node size
+  geom_node_text(aes(label = name), repel = TRUE, vjust = 1, hjust = 1) +  # Use repel for label positioning
+  theme_void()
+```
+
+### 
+
+Trigram Correlations
+
+```{r}
+
+```
+
+```{r}
+
+#Trying to get correlations
+
+
+# count words co-occuring within sections
+word_pairs <- bigram_reddit_counts %>%
+  pairwise_count(word1, word2, sort = TRUE)
+
+View(word_pairs)
+
+```
+
+```{r}
+word_pairs %>%
+  filter(item1 == "cat") %>% head()
+```
+
+```{r}
+
+```
+
+```{r}
+sampled_reddit_bigram_data <- sample_n(bigram_reddit_counts, 1000)
+
+
+```
+
+```{r}
+word_cors <- sampled_reddit_bigram_data %>% pairwise_cor(word1, word2, sort = TRUE)
+
+```
+
+```{r}
+summary(word_cors)
+
+
+```
+
+```{r}
+head(word_cors)
+```
+
+```{r}
+
+
+
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## Part 3 - Data Exploration & Manipulation
+
+Research Question:
+
+How well do posts perform in various engagement metrics across different subreddits?
+
+In order to do this I needed to extract numeric features from the combined text of the title and comments for each post. I did not include self text as it was mostly empty.
+
+The features involved the word count, average word count, unique word count and sentiment scores. The sentiment scores were found using the vocabulary held in the AFINN package. Using an inner join between the AFINN vocabulary (each with a numeric positive/negative score assigned) and the text data of the posts I could create a summed sentiment score for each post. I had initially used the tf_idf() to assign a higher weight to important words and lower weights to common words. But these values were mostly the same for all the posts so they were removed.
+
+I then performed one more left join with the text numeric data and the top_post_comment_data .(This included only the top comments because the top comments and controversial comments were mostly replicas of each other except for a couple predictors)
+
+```{r}
+
+
+```
+
+```{r}
+
+```
+
+```{r}
+AFINN <- get_sentiments("afinn")
+
+
+```
+
+```{r}
+# Text data
+text <- "Left the office amp found the neighbors cat in my car Haha what an unexpected surprise Howd that little fella get in Slipped in when you were getting into your car that morning It was Bring your neighbours cat to work day did nobody tell you Thats the look of who are you Doesnt matter hate you anyways Haha he doesnt look nearly as happy about it as you do Butterscotch looks decidedly unthrilled about his decisions He is doing great and safely at home  He didnt enjoy the adventure"
+
+# Convert text to a tibble with one row
+text_df <- tibble(text = text)
+
+# Tokenize the text
+text_df <- text_df %>%
+  unnest_tokens(word, text)
+
+# Match words with AFINN lexicon
+matched_words <- text_df %>%
+  inner_join(AFINN, by = "word") %>%
+  select(word, value)
+
+# Print the matched words and their respective sentiment scores
+print(matched_words)
+
+# Calculate sentiment score
+sentiment_score <- text_df %>%
+  inner_join(AFINN, by = "word") %>%
+  summarise(
+    sentiment_score = sum(value)
+  )
+
+# Print the sentiment score
+print(sentiment_score)
+
+```
+
+```{r}
+
+```
+
+```{r}
+# Tokenize the text and calculate numeric features for each post
+text_numeric_features <- unique_title_com_id_df %>%
+  mutate(post_id = as.character(post_id)) %>%
+  unnest_tokens(word, title_comments) %>%
+  group_by(post_id) %>%
+  summarise(
+    word_count = n(),
+    average_word_length = mean(nchar(word)),
+    unique_word_count = n_distinct(word)
+  )
+
+# Calculate sentiment score for each post
+sentiment_score <- unique_title_com_id_df %>%
+  unnest_tokens(word, title_comments) %>%
+  inner_join(get_sentiments("afinn"), by = "word") %>%
+  group_by(post_id) %>%
+  summarise(
+    sentiment_score = sum(value)
+  )
+
+#Getting tf_idf
+tf_idf <- unique_title_com_id_df %>%
+  count(post_id, title_comments) %>%
+  bind_tf_idf(post_id, title_comments, n) %>%
+  arrange(desc(tf_idf))
+
+
+
+# Combine numeric features and sentiment score into the same dataframe
+text_numeric_features <- inner_join(text_numeric_features, sentiment_score, by = "post_id")
+
+# Print the combined features
+View(text_numeric_features)
+
+```
+
+```{r}
+
+```
+
+```{r}
+top_post_comment_data <- post_comment_data  %>%
+  filter(ranking_type == "top")
+
+View(top_post_comment_data)
+
+```
+
+```{r}
+
+```
+
+```{r}
+# Perform a left join based on post_id
+combined_features <- left_join(text_numeric_features, top_post_comment_data %>% 
+                                 select(post_id, ups, downs, unique_authors, total_ups, num_comments, subreddit_subscribers, upvote_ratio, score), 
+                               by = "post_id")
+
+# View the updated combined_features dataframe
+View(combined_features)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## 
+
+## Part 3 - Feature Engineering - PCA
+
+Now before I performed K means clustering I wanted to reduce my predictors to 2 dimension as this reduces our chance for overfitting while also making the process less computationall intensive. So I would need to perform PCA to end up with just PC1 and PC2. First I create a recipe with no target variable as it is unsupervised learning and the data being our combined features. I use update role to remove post_id from the modelling step snice it only takes numeric predictors. Then I fill in missing values, remove low variance predictors and normalise predictors mean and variance before finally applying pca.
+
+Then I apply our recipe to our data data and select our principal components that will be used for K means clustering. To get a sense of how much variance I am capturing with my principal components I get the eigenvalues and plot them. Looking at this the first two principal components capture about 50% of the variance in the data. Ideally I would want to capture the large majority like 80% but I stick with this.
+
+```{r}
+
+```
+
+```{r}
+#Using PCA to reduce to 2 dimensions
+```
+
+```{r}
+pca_recipe <-
+ # unsupervised so no need for an outcome variable
+  recipe(~., data = combined_features) %>%
+  #make sure to ignore non-numeric columns (education, marital_status) and irrelevant predictors (id, year_birth) from the list of predictors
+  update_role(c(post_id), new_role = "ID") %>%
+  #apply knn imputation to fill missing values 
+  step_impute_knn(all_numeric_predictors(), neighbors = 3) %>%
+  # remove zero variance predictors as they don't carry any information
+  step_zv(all_numeric_predictors()) %>%
+  # normalize the data to avoid out-sized impact of some variables
+  step_normalize(all_numeric_predictors()) %>%
+  # apply principal component analysis
+  step_pca(all_numeric_predictors(), num_comp = 2, keep_original_cols=TRUE) %>%
+  prep()
+```
+
+```{r}
+#applying recipe to our features to select PC1 and PC2
+
+pca_results <- bake(pca_recipe, combined_features)
+pca_results %>%
+  select(PC1, PC2) %>%
+  head()
+```
+
+```{r}
+ggplot(pca_results, aes(PC1, PC2)) +
+  geom_point(alpha=0.3,color="#7038d1") +
+  ggtitle("Principal Components", subtitle = "2-dimensional representation of all the predictors")
+
+```
+
+```{r}
+pca_fit <- pca_recipe$steps[[4]]$res
+```
+
+```{r}
+eigenvalues <-
+  pca_fit %>%
+  tidy(matrix = "eigenvalues")
+```
+
+```{r}
+#Plotting eigenvalues (principal components) to see each ones influence over the total variance.
+eigenvalues %>%
+  filter(PC <= 23) %>%
+  ggplot(aes(PC, percent)) +
+  geom_col()+
+  geom_text(aes(label = percent), vjust = -0.2)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## 
+
+## Part 3 - K-Means Clustering
+
+To decide how many clusters I want to use I plot the K means clusters using clusters 1-9 just to see what all the options look like. I also use the elbow plot to pinpoint at which cluster the gradient decreases at a slow enough rate to form the point of an elbow. This seems to be about 5 clusters. Using pca and kclust I can apply clustering to the dataset and from there analyse these clusters.
+
+We can see about 5 clusters and know I want to know how all these clusters are different in terms of their values for all the predictors. I also want to know which subreddits are in each of these clusters so I can start to identify the differences or similarities in their users behaviour.
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+recipe_kmeans <- recipe(~ ., data = combined_features) %>%
+    step_impute_knn(all_numeric_predictors, neighbors = 3) %>%
+    step_normalize(all_numeric_predictors())
+```
+
+```{r}
+kclust = 
+  pca_results  %>%
+  select(PC1, PC2) %>%
+  kmeans(centers = 5) 
+
+tidy(kclust)
+```
+
+```{r}
+augment(kclust, pca_results) %>%
+  ggplot() +
+  geom_point(aes(x=PC1, y=PC2, color=.cluster), alpha=0.6) +
+  geom_point(data = tidy(kclust), aes(x=PC1, y=PC2), size = 8, shape = "x")
+```
+
+```{r}
+
+```
+
+```{r}
+# Create a plot with points colored by cluster
+plot <- augment(kclust, pca_results) %>%
+  ggplot() +
+  geom_point(aes(x = PC1, y = PC2, color = .cluster), alpha = 0.6)
+
+# Randomly select 10 points
+subset_data <- augment(kclust, pca_results) %>%
+  sample_n(size = 10)  # Randomly select 10 points
+
+# Add text annotations for post_id
+plot +
+  geom_text(data = subset_data, aes(x = PC1, y = PC2, label = post_id), size = 3, color = "black")
+
+```
+
+```{r}
+
+```
+
+Here are the plots I used to land on using 5 clusters. This process was akin to fitting the model if this was supervised learning. The K means cluster finding the x and y coordinates for the centroids to be places is the equivalent to the process of finding the predictions like in supervised learning.
+
+```{r}
+#Multiple Cluster Plots and Elbow plot to determine suitable number of clusters
+
+kclusts <- 
+  tibble(k = 1:9) %>%
+  mutate(
+    kclust = map(k, ~kmeans(select(pca_results, PC1, PC2), .x)),
+    tidied = map(kclust, tidy),
+    glanced = map(kclust, glance),
+    augmented = map(kclust, augment, pca_results)
+  )
+
+clusters <- 
+  kclusts %>%
+  unnest(cols = c(tidied))
+
+assignments <- 
+  kclusts %>% 
+  unnest(cols = c(augmented))
+
+clusterings <- 
+  kclusts %>%
+  unnest(cols = c(glanced))
+```
+
+```{r}
+
+ggplot(assignments, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = .cluster), alpha = 0.7) + 
+  facet_wrap(~ k) +
+  geom_point(data = clusters, size = 4, shape = "x")
+```
+
+```{r}
+ggplot(clusterings, aes(k, tot.withinss)) +
+  geom_line(color="red",alpha=0.5,linewidth=1) +
+  geom_point(color="red",size=4)+
+  theme_grey(base_size = 15)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## 
+
+## Part 3 - Observations of Clustered Samples
+
+Observations from the cluster comparison plot and table showing the subreddits belonging to each cluster:
+
+Cluster 4 is the smallest and only contains 2 posts which both seem to be anomalous compared to the rest of the posts characteristics. Cluster 4 boasts high total ups and word count. There could be 2 reason for this. This post may have appealed to a large audience which prompts them to engage with via comments. Or they have abnormally high likes and word count because they could have been made and boosted by bots. Upon inspecting the posts they both seem to be the former because they are story based posts which encourage others to share their own emotionally charged story.
+
+Cluster 5 is the largest and appears to be the worse performing posts. The posts here, despite having comparable subscribers to the other clusters, perform the worst. They seem to have the lowest engagement and appeal as seems to be the case form having relatively lower comments, sentiment score, total ups.
+
+Clusters 1 and 2 seem to be about the same size and make up more than half of the posts. In terms of positive engagement metrics it seems cluster 2 is the better half. Its often roughly double cluster 1 in important metrics like comments, sentiment score and total ups. Interestingly enough cluster 1 beats it in ups which is specifically engagement with the post. This suggests that cluster 2’s positive engagement comes from the community interacting with themselves more than the actual post.
+
+Cluster 3’s number of comments was the second highest, rivalling cluster 2 but this despite this massive engagement it seems to have the largest downs and one of the largest ups and total ups. This suggests that it was highly polarising. Upon inspection this cluster tends to focus subreddits like r/funny, r/worldnews and r/gaming all of which can be controversial or polarising due to the various heated opinions that reside on these subreddits.
+
+Overall the clusters could be ranked in terms of how well performing their respective posts are. In this case we have the following order:
+
+Anomalously well performing - cluster 4
+
+Above average - cluster 3
+
+Average - cluster 1 and 2 (cluster 2 being the better half)
+
+Below average - cluster 5
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+# Order the dataframe by subreddit_subscribers in descending order and select unique subreddits with their respective subscribers
+unique_subreddits <- post_comment_data %>%
+  arrange(desc(subreddit_subscribers)) %>%
+  distinct(subreddit, .keep_all = TRUE) %>%
+  select(subreddit, subreddit_subscribers)
+
+# Print the unique subreddits and their respective subscribers
+print(unique_subreddits)
+
+```
+
+```{r}
+
+```
+
+```{r}
+# Extract cluster assignments from kclust
+cluster_assignments <- augment(kclust, pca_results) %>%
+  select(.cluster, post_id)  # Select only .cluster and post_id columns
+
+# Combine with post_id from pca_results
+cluster_data <- left_join(cluster_assignments, pca_results, by = "post_id")
+
+cluster_assignments
+```
+
+```{r}
+# Now, cluster_data contains cluster assignments specific to each post_id
+# Let's group post_ids by cluster and count the number of post_ids in each cluster
+post_ids_count_by_cluster <- cluster_data %>%
+  count(.cluster)
+
+# Print the count of post_ids for each cluster
+print(post_ids_count_by_cluster)
+```
+
+```{r}
+specific_value <- "3"
+filtered_data <- subset(cluster_assignments, .cluster == specific_value)
+filtered_data
+```
+
+```{r}
+specific_value <- "120oesm"
+filtered_data <- subset(post_comment_data, post_id == specific_value)
+filtered_data
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+
+# Define custom color palette
+custom_palette <- c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd")  # Example colors, feel free to adjust
+
+# Reshape the data into long format
+cluster_data_long <- pivot_longer(cluster_data, cols = c("word_count", "average_word_length", "unique_word_count", "sentiment_score", "PC1", "PC2", "ups", "downs", "unique_authors", "total_ups", "score", "num_comments", "subreddit_subscribers", "upvote_ratio"), names_to = "Variable", values_to = "Value")
+
+
+# Create a grouped bar plot
+ggplot(cluster_data_long, aes(x = Variable, y = Value, fill = .cluster)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  labs(title = "Cluster Comparison", x = "Variables", y = "Values") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels
+        legend.position = "bottom") +                       # Move legend to the bottom
+  scale_fill_manual(values = custom_palette)                # Use custom color palette for clusters
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+# Join cluster_assignments with post_comments_data to get corresponding post_id
+post_ids_by_cluster_with_comments <- cluster_assignments %>%
+  left_join(post_comment_data, by = c("post_id" = "post_id")) %>%
+  select(post_id, subreddit, .cluster) %>% distinct()
+
+# Print the result
+print(post_ids_by_cluster_with_comments)
+
+```
+
+```{r}
+# Filter the dataframe to include only rows corresponding to clusters 1 to 5
+subreddits_clusters_1_to_5 <- post_ids_by_cluster_with_comments %>%
+  filter(.cluster %in% 1:5) %>%
+  select(.cluster, subreddit)
+
+# Create a table where each row represents a subreddit and each cell contains the list of clusters where the subreddit appears
+subreddits_table <- subreddits_clusters_1_to_5 %>%
+  mutate(subreddit = as.character(subreddit)) %>%  # Ensure subreddit column is character type
+  group_by(subreddit) %>%
+  summarize(clusters = toString(unique(.cluster))) %>%
+  spread(key = subreddit, value = clusters, fill = "")
+
+# Print the transposed table
+print(t(subreddits_table))
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
