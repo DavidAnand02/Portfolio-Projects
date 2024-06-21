@@ -1,0 +1,1317 @@
+---
+title: "DS202W - DS202W - Summer Summative ('Exam')"
+author: "23007"
+output: html
+self-contained: true
+---
+
+```{r}
+suppressWarnings({
+library(tidyverse)
+library(tidymodels)
+library(dplyr) 
+library(viridis)
+library(tidytext)
+library(tidygraph)
+library(textdata)
+library(textTinyR)
+library(tidyr)
+library(vip)
+})
+```
+
+```{r}
+suppressWarnings({
+library(quanteda)
+library(quanteda.textstats)
+library(quanteda.textplots)
+library(quanteda.textmodels)
+library(ggplot2)
+library(igraph)
+library(widyr)
+library(ggraph)
+library(stringr)
+library(stringdist)
+library(ranger)
+})
+```
+
+```{r}
+
+```
+
+# Part 1
+
+## Q1 - Answer
+
+What do you see? Why the modelling choices were made?
+
+The data scientist used a decision tree classifier to predict the 3 classes: healthy (0), pre-diabetic (1) and diabetic (2). My observations fall into 3 categories: the data, model and visualisation.
+
+With regards to the data I can clearly observe:
+
+Character variables, e.g Diabetes_012, were converted to factors for the model to understand them as categories. Also the data was split into train (70%) and test (30%) sets (using initial_split() ) so that the model could be evaluated on unseen data. No other data pre-processing steps were used. This may have been because the data is numeric and most predictors are binary which is suitable for decision trees to split and also means that no scaling was needed like normalisation or standardisation. Also the model is robust to both outliers and missing values so there would be no need to impute the data.
+
+With regards to the model I can clearly observe:
+
+In the code, the decision tree argument, cost_complexity = 0. This is an argument for decision trees which controls how easily new sub trees can be grown. Its purpose is to trim sub trees with high error/cost to reduce the models likelihood of overfitting. Since its set to zero, the decision tree will keep splitting unchecked or until it reaches a stopping criterion, leaving us with a complex model. By that point it will have memorised the training data, outliers and have simply captured noise. As a result it will perform worse on evaluation due to overfitting than if it it were to be pruned.
+
+It could also be that he was trying to capture or find complex relations in the data. Or maybe he just wanted to train the model fast because pruning can increase training time. What seems more likely is that the data scientist choose to not prune the tree because he wasn’t concerned about interpretability and more interested in predictive power of his model. Despite this I still think some pruning would have been beneficial to overall predictive power as it would reduce overfitting to the training data.
+
+From the code its also evident the data scientist has used the tidy model workflow to build his decision tree classifier. He starts with a recipe which ordinarily contains the pre-processing steps that will be applied to the predictors of our choosing in the data set of our choosing for the models of our choosing. He then specifies the model as decision tree and sets a workflow which streamlines the fitting and evaluating steps. He may have chosen the decision tree because it in a way ranks which features have the most predictive power by using them earlier in the tree as a splitting condition. This can be used to tell us which features are important relative to others when predicting diabetes.
+
+With regards to the visualisation I can clearly observe:
+
+He used the rpart.plot to get the visual of the decision tree. Typically these plots are highly interpretable due to them being neat flowcharts. But it appears very cluttered here due to there being no pruning, so the tree kept splitting unchecked. Despite it being cluttered its structure can be identified.
+
+There are tree nodes, split in the branches and leaves. The tree nodes are like if-else statements which use some feature from the data (e.g HighBP \< 0.5) to linearly separate the data. By splitting the data many times the model can overcome even non-linear data. The branches start from a node and reach a new leaf. The final leaves at the end are called terminal leaves and they represent the final classification (Diabetes_012) of some corresponding row in the data.
+
+Overall decision trees were a pretty solid choice for this classification task. They’re not very finicky with data so not really any data pre-processing was needed in the recipe. Through hierarchical splitting they can handle non-linear data and with pruning can spit out an interpretable flowchart. That being said this particular model didn’t make use of cross validation, hyperparameter tuning and didn’t even use any evaluation metrics suitable for classification predictions. Moreover, he didn’t check for class imbalances which could skew the models results. After a quick check I get the following instances in R: 213703 (for 0), 4631 (for 1) and 35346 (for 2). Such a situation could be remedied with upsampling, downsampling or class wieghts. Ultimately the model was quite simple and didn’t make use of the mentioned techniques so it could maybe be treated as a baseline model but not a final model.
+
+## Q2 - Data Processing
+
+Keeping all else the same the things I would do differently includes the following: feature engineering, deal with class imbalances and use random forests with CV/hyperparameter tuning. I would evaluate the models using ROC-AUC, accuracy, confusion matrix, precision, recall, sensitivity.
+
+Data pro-processing and feature engineering:
+
+Some variables are more suitable as categories like age groups or income brackets. And I would create interaction terms to try to combine the effect of certain variables e.g physical activity and BMI. This would be a more efficient use of the predictors I have available to me. I would also check for class imbalances and either downsample or upsample to balance the classes. I could also just use stratified cross validation to address class imbalances. This is so the final predictions are not skewed to any particular class.
+
+Model Construction:
+
+I would use an ensemble model like a random forest which averages the outcome of many decision trees. It typically gives higher accuracy and better predictive power at the cost of a slight decrease in interpretability. I would optimise the model by using cross validation and hyperparameter tuning to find its optimal parameters for number of trees and mtry. I would then fit and evaluate a final tuned random forest model.
+
+Cross validation would allow me to average my results across many folds of data so that my results are as accurate as can be to the estimates of the whole data set’s accuracy or desired metric. To find the most optimal parameters I would select a metric I was interested in, e.g accuracy and plot a graph with accuracy on the y axis and a parameter (e.g number of trees) on the x axis. Then simply choose the number of trees which maximises desired parameter.
+
+Model Evaluation:
+
+To evaluate the model I would first plot a ROC-AUC curve. The ROC curve needs to be more skewed to the left as it results in a higher true positive rate for a little false positive rate. This is important when we particularly care about predicting the positive class correctly. E.g in the case where a positive case represents an infected person because we need to find them to contain the infection. If the ROC was closer to a y=x line then its no better than a 50/50 chance or a 50% classifier. The area under curve is better when its higher because it just means that we get more true false positive rate for a given unit of false positive rate compared to another roc-auc curve.
+
+I would also use a Confusion matrix which neatly displays the true positive rate, false positive rate, true negative rate and false negative rate. These could be used to find the precision, recall and f-measure. Precision gives us the proportion of true positive predictions out of all positive predictions. If we care about true positives, which we normally do, then the higher the better. Recall tells us the proportion of true positive predictions among all actual positive instances in the dataset. F-measure is the harmonic mean of the two and for all 3 cases the higher the better.
+
+Precision: TP / (TP + FP)
+
+Recall: TP / (TP + FN)
+
+F-measure: 2 \* (Precision \* Recall) / (Precision + Recall)
+
+Feature Importance:
+
+In order to determine which features have the most predictive power I could use the function: vip::vip(final_rf_model). It gives me the variable importance plots which are calculated using a decrease or increase in some metric like gini impurity, accuracy, etc…. Knowing this I can use fewer variables in another model if I am trying to compare the performance of multiple models (which I would ideally do)
+
+```{r}
+
+# Read data
+diabetes_data <- read.csv("C:/Users/David Moraes/Downloads/cdc_diabetes.csv")
+
+
+
+```
+
+```{r}
+
+
+# Feature Engineering: BMI Categories
+diabetes_data <- diabetes_data %>%
+  mutate(BMI_Category = case_when(
+    BMI < 18.5 ~ "Underweight",
+    BMI >= 18.5 & BMI < 25 ~ "Normal Weight",
+    BMI >= 25 & BMI < 30 ~ "Overweight",
+    BMI >= 30 ~ "Obese"
+  ))
+
+# Feature Engineering: Age Groups
+diabetes_data <- diabetes_data %>%
+  mutate(Age_Group = case_when(
+    Age < 35 ~ "Young Adults",
+    Age >= 35 & Age < 65 ~ "Middle-aged Adults",
+    Age >= 65 ~ "Seniors"
+  ))
+
+# Feature Engineering: Interaction Terms (e.g., BMI and Physical Activity)
+diabetes_data <- diabetes_data %>%
+  mutate(BMI_PhysicalActivity = BMI * PhysActivity)
+
+# Display the modified diabetes_data table
+head(diabetes_data)
+
+```
+
+```{r}
+
+
+# Check class imbalance
+class_distribution <- table(diabetes_data$Diabetes_012)
+print(class_distribution)
+
+```
+
+```{r}
+set.seed(123)
+
+# Separate data by class
+class0_data <- diabetes_data[diabetes_data$Diabetes_012 == 0, ]
+class1_data <- diabetes_data[diabetes_data$Diabetes_012 == 1, ]
+class2_data <- diabetes_data[diabetes_data$Diabetes_012 == 2, ]
+
+# Calculate the maximum class size
+max_class_size <- max(nrow(class0_data), nrow(class1_data), nrow(class2_data))
+
+# Oversample and undersample
+class0_oversampled <- class0_data[sample(nrow(class0_data), size = max_class_size, replace = TRUE), ]
+class1_oversampled <- class1_data[sample(nrow(class1_data), size = max_class_size, replace = TRUE), ]
+class2_oversampled <- class2_data[sample(nrow(class2_data), size = max_class_size, replace = TRUE), ]
+
+class0_undersampled <- class0_data[sample(nrow(class0_data), size = max_class_size, replace = FALSE), ]
+
+# Combine oversampled and undersampled data
+balanced_data <- rbind(class0_oversampled, class1_oversampled, class2_oversampled, class0_undersampled)
+
+# Shuffle the data
+balanced_diabetes_data <- balanced_data[sample(nrow(balanced_data)), ]
+
+```
+
+```{r}
+
+
+```
+
+```{r}
+# Convert necessary columns to factors
+balanced_diabetes_data$BMI_Category <- as.factor(balanced_data$BMI_Category)
+
+balanced_diabetes_data$Age_Group <- as.factor(balanced_diabetes_data$Age_Group)
+
+balanced_diabetes_data$Diabetes_012 <- as.factor(balanced_diabetes_data$Diabetes_012)
+
+# Verify data types
+str(balanced_diabetes_data)
+```
+
+```{r}
+
+```
+
+```{r}
+# Check class imbalance
+class_distribution <- table(balanced_diabetes_data$Diabetes_012)
+print(class_distribution)
+```
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Determine the size of the training set (e.g., 80%)
+train_size <- 0.8
+
+# Determine the number of rows for the training set
+num_train <- round(nrow(balanced_diabetes_data) * train_size)
+
+# Split the data into training and testing sets
+train_data <- balanced_diabetes_data[1:num_train, ]
+test_data <- balanced_diabetes_data[(num_train + 1):nrow(balanced_diabetes_data), ]
+
+```
+
+```{r}
+#Will use these folds for cross validation for models
+set.seed(23007)
+
+folds <- vfold_cv(train_data, v = 2)
+
+folds
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## Q2 - Random Forrest and Hyper-parameter tuning
+
+I performed hyper-parameter tuning using the grid_regular and tune_grid to find the best values for trees() and min_n(). This could have included mtry() as well but I thought it may slow down my laptop. I then used the select best function to find the best values for my chosen metric of accuracy. I then made some line plots to visualise which values of trees and min_n contributed to getting high accuracy and roc auc values.
+
+After finding my ideal parameter values I would have fitted my final model and workflow and evaluated its performance of the test set. Then I would have checked my confusion matrix and values for precision, recall and f measure (hoping to maximse them all). If I was comparing random forests to boosted trees I would have compared their Roc-Auc curves.
+
+```{r}
+#Now using Random Forests
+set.seed(23007)
+
+rf_recipe <- 
+    recipe(Diabetes_012 ~ BMI_PhysicalActivity + BMI_Category, data = train_data) 
+
+```
+
+```{r}
+set.seed(23007)
+
+rf_specification <-
+  rand_forest(trees = 1000) %>% 
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("classification")
+
+rf_wf <-
+    workflow() %>%
+    add_recipe(rf_recipe) %>%
+    add_model(rf_specification)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+set.seed(23007)  
+
+rf_tune_spec <- rand_forest(trees = tune()) %>%  
+  set_engine("ranger", importance = "impurity") %>%  
+  set_mode("classification") 
+
+rf_tune_wf <-  workflow() %>%     
+  add_recipe(rf_recipe) %>%    
+  add_model(rf_tune_spec)
+```
+
+```{r}
+set.seed(23007) 
+
+tree_grid_trial <- grid_regular(trees(range = c(100, 500)), levels = 5)
+```
+
+```{r}
+
+```
+
+```{r}
+# set.seed(23007) 
+# 
+# rf_tune_results <- rf_tune_wf %>% 
+#   tune_grid( resamples = folds,  grid = tree_grid_trial )  
+# 
+# View(rf_tune_results)
+```
+
+```{r}
+# set.seed(23007) 
+# rf_tune_results %>%   
+#   collect_metrics()
+```
+
+```{r}
+# set.seed(23007) 
+# 
+# best_rf <- rf_tune_results %>%   
+#   select_best(metric = "accuracy") 
+# 
+# best_rf
+```
+
+```{r}
+# set.seed(23007) 
+# 
+# rf_tune_results %>%  
+#   collect_metrics() %>%  
+#   mutate(trees = factor(trees)) %>%  
+#   
+#   ggplot(aes(min_n, mean, color = trees)) +   geom_line(size = 1.5, alpha = 0.6) +   geom_point(size = 2) +   facet_wrap(~ .metric, scales = "free", nrow = 2) +   scale_x_log10(labels = scales::label_number()) +   scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
+
+```
+
+```{r}
+```
+
+## Q2 - Final Workflow and Fit
+
+```{r}
+# #From here its about finalising the workflow and fit
+# set.seed(23007) 
+# 
+# final_rf_wf <-    rf_tune_wf %>%    
+#   finalize_workflow(best_rf) 
+# 
+# final_rf_wf
+```
+
+```{r}
+# set.seed(23007) 
+# 
+# final_rf_fit <-  final_rf_wf %>%  
+#   last_fit(dataset_split)  
+# 
+# final_rf_fit %>%  collect_metrics() 
+```
+
+```{r}
+# set.seed(23007)  
+# 
+# final_rf_model <- final_rf_fit %>% 
+#   extract_fit_parsnip() 
+```
+
+```{r}
+# set.seed(23007) 
+# 
+# final_rf_model %>%      
+#   augment(new_data =  test_data) %>%    
+#   conf_mat(truth=ranking_type, estimate=.pred_class) 
+```
+
+```{r}
+# set.seed(23007)  
+# 
+# final_rf_model %>%   
+#   augment(new_data =  test_data) %>%    
+#   conf_mat(truth=ranking_type, estimate=.pred_class) %>% 
+#   summary()
+```
+
+```{r}
+```
+
+```{r}
+# # Visualize variable importance 
+# vip::vip(final_rf_model)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## Q3 - Poisoned Data
+
+Here the goal is to find a way to predict labels despite not knowing how many of them have been poisoned. This is not a good situation and I don't think much meaningful analysis can be done here with supervised methods. My hope is that unsupervised learning could find a way to group the majority of the data so that other new observations would mostly fall into clusters that could be used to predict their class/label (whether healthy, pre-diabetic or diabetic).
+
+```{r}
+
+```
+
+```{r}
+# Load necessary libraries
+library(tidymodels)
+library(tidyverse)
+library(fpc)  # For DBSCAN
+library(ggplot2)
+```
+
+```{r}
+set.seed(123)
+
+# Function to poison a percentage of labels in the target column
+poison_labels <- function(data, target_column, poison_percentage) {
+  set.seed(42)
+  n <- nrow(data)
+  num_to_poison <- round(n * poison_percentage / 100)
+  
+  # Ensure the target column is a factor
+  data[[target_column]] <- as.factor(data[[target_column]])
+  
+  # Randomly select indices to poison
+  poison_indices <- sample(seq_len(n), size = num_to_poison, replace = FALSE)
+  
+  # Possible class labels
+  possible_labels <- levels(data[[target_column]])
+  
+  # Poison the selected labels
+  for (i in poison_indices) {
+    current_label <- data[[target_column]][i]
+    new_label <- sample(possible_labels[possible_labels != current_label], 1)
+    data[[target_column]][i] <- new_label
+  }
+  
+  return(data)
+}
+
+# Poison 10% of the Diabetes_012 labels in the dataset
+# Change the last parameter to change the proportion of labels poisoned
+poisoned_data <- poison_labels(diabetes_data, "Diabetes_012", 10)
+
+# Inspect the first few rows of the poisoned data
+head(poisoned_data)
+```
+
+```{r}
+
+
+```
+
+## Q3 - PCA
+
+Rather than using all the predictors, I'll first find the principal components that contribute most to the variance in the data. These will serve as my x and y axis that give me the most predictive power.
+
+```{r}
+set.seed(123)
+
+pca_recipe <-
+ # unsupervised so no need for an outcome variable
+  recipe(~., data = balanced_diabetes_data) %>%
+  #make sure to ignore non-numeric columns (education, marital_status) and irrelevant predictors (id, year_birth) from the list of predictors
+
+  #apply knn imputation to fill missing values 
+  step_impute_knn(all_numeric_predictors(), neighbors = 3) %>%
+  # remove zero variance predictors as they don't carry any information
+  step_zv(all_numeric_predictors()) %>%
+  # normalize the data to avoid out-sized impact of some variables
+  step_normalize(all_numeric_predictors()) %>%
+  # apply principal component analysis
+  step_pca(all_numeric_predictors(), num_comp = 2, keep_original_cols=TRUE) %>%
+  prep()
+
+```
+
+```{r}
+set.seed(123)
+
+#applying recipe to our features to select PC1 and PC2
+
+pca_results <- bake(pca_recipe, balanced_diabetes_data)
+pca_results %>%
+  select(PC1, PC2) %>%
+  head()
+```
+
+```{r}
+set.seed(123)
+
+ggplot(pca_results, aes(PC1, PC2)) +
+  geom_point(alpha=0.3,color="#7038d1") +
+  ggtitle("Principal Components", subtitle = "2-dimensional representation of all the predictors")
+
+```
+
+```{r}
+set.seed(123)
+
+pca_fit <- pca_recipe$steps[[4]]$res
+```
+
+```{r}
+set.seed(123)
+
+eigenvalues <-
+  pca_fit %>%
+  tidy(matrix = "eigenvalues")
+```
+
+```{r}
+set.seed(123)
+
+#Plotting eigenvalues (principal components) to see each ones influence over the total variance.
+eigenvalues %>%
+  filter(PC <= 23) %>%
+  ggplot(aes(PC, percent)) +
+  geom_col()+
+  geom_text(aes(label = percent), vjust = -0.2)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## Q3 - Cluster Analysis with K-means cluster
+
+My approach here is to use cluster analysis to see if the unsupervised machine learning model won't be deterred by the poisoned labels. I will check the clusters found by k-means for which labels are placed in each cluster. I think the largest proportion of labels that belong to that cluster would be the indication that the model is able to classify most data points. The ones that seem anomalous could be treated as the poisoned labels.
+
+```{r}
+set.seed(123)
+
+recipe_kmeans <- recipe(~ ., data = balanced_diabetes_data) %>%
+    step_impute_knn(all_numeric_predictors, neighbors = 3) %>%
+    step_normalize(all_numeric_predictors())
+```
+
+```{r}
+set.seed(123)
+
+kclust = 
+  pca_results  %>%
+  select(PC1, PC2) %>%
+  kmeans(centers = 3) 
+
+tidy(kclust)
+```
+
+```{r}
+set.seed(123)
+
+augment(kclust, pca_results) %>%
+  ggplot() +
+  geom_point(aes(x=PC1, y=PC2, color=.cluster), alpha=0.6) +
+  geom_point(data = tidy(kclust), aes(x=PC1, y=PC2), size = 8, shape = "x")
+```
+
+```{r}
+set.seed(123)
+
+# Create a plot with points colored by cluster
+plot <- augment(kclust, pca_results) %>%
+  ggplot() +
+  geom_point(aes(x = PC1, y = PC2, color = .cluster), alpha = 0.6)
+
+# Randomly select 10 points
+subset_data <- augment(kclust, pca_results) %>%
+  sample_n(size = 90)  # Randomly select 10 points
+
+# Add text annotations for Diabetes_012
+plot +
+  geom_text(data = subset_data, aes(x = PC1, y = PC2, label = Diabetes_012), size = 3, color = "black")
+
+```
+
+```{r}
+set.seed(123)
+
+#  `kclust` is the result of k-means clustering
+# Add cluster assignments to the original dataset
+balanced_diabetes_data$cluster <- kclust$cluster
+
+# Group the data by cluster and label, then calculate counts
+cluster_counts <- balanced_diabetes_data %>%
+  group_by(cluster, Diabetes_012) %>%
+  summarise(count = n()) %>%
+  ungroup()
+
+# Print the counts for each cluster and label
+print(cluster_counts)
+
+
+```
+
+```{r}
+set.seed(123)
+
+# Plot the counts of each label within each cluster
+ggplot(cluster_counts, aes(x = factor(cluster), y = count, fill = factor(Diabetes_012))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Cluster", y = "Count", fill = "Diabetes Status") +
+  scale_fill_manual(values = c("blue", "green", "red")) +  # Adjust colors as needed
+  theme_minimal() +
+  theme(legend.position = "top")
+
+```
+
+It can be seen that the greatest proportion of 0's belong in cluster 3, the greatest proportion of 1's are in cluster 1 and the most (second most) 2's are in cluster 2. Unfortunately, the 2 principal components used only account for about 25% of the variance which is far from the 80% which we want. Also I don't know what proportion of the total labels have been poisoned. So for my analysis I am assuming that wherever the highest proportion of a particular class resides that cluster is probably suitable to predict future labels (even though this situation is far from ideal). I think this is a reasonable assumption because I believe the poisoned labels are randomly distributed. If they were systematically distributed e.g only certain age groups labels were poisoned then I am alot less sure about these predictions.
+
+So for any future data points that have pc1 and pc2 that coincides with any of the clusters I think I can use the clusters as a way to predict their label. Any of them that fall in cluster 2 I would predict they are 2 (pre-diabetic), for cluster 3 they are 0 (healthy) and for cluster 1 they are 1 (diabetic).
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+# Part 2
+
+Here I use K means to determine if there are any relationships between variables used to inform doctors about how patients will be affected in their drug trials/treatments.
+
+While K means is good at separating linear data and is not affected by density it would struggle with classes of data that overlap or surround one another. Also they assign all data points to a cluster so they are unable to leave out outliers. It may have been better to use DB scan because it can handle linear or non linear data while still being robust to outliers.
+
+## Q4 - K-means Analysis
+
+```{r}
+set.seed(123)
+
+recipe_kmeans <- recipe(~ ., data = balanced_diabetes_data) %>%
+    step_impute_knn(all_numeric_predictors, neighbors = 3) %>%
+    step_normalize(all_numeric_predictors())
+```
+
+## Q4 - Mental vs Physical Health
+
+```{r}
+set.seed(123)
+
+kclust = 
+  balanced_diabetes_data  %>%
+  select(MentHlth
+, PhysHlth
+
+
+) %>%
+  kmeans(centers = 4) 
+
+tidy(kclust)
+```
+
+```{r}
+set.seed(123)
+
+augment(kclust, balanced_diabetes_data) %>%
+  ggplot() +
+  geom_point(aes(x=MentHlth, y=PhysHlth
+
+, color=.cluster), alpha=0.6) +
+  geom_point(data = tidy(kclust), aes(x=MentHlth, y=PhysHlth
+
+), size = 8, shape = "x")
+```
+
+The mental health vs physical Health data populated the whole graph and so 4 clusters seemed appropriate. Unfortunately could not plot many to find appropriate number of centroids according to elbow plot (explained below.)
+
+I interpret the 2 variables as the higher the better.
+
+Cluster 1 and cluster 3 both show that poor mental health correlated with poor physical health and vice versa. This was expected from our current understanding of the literature.
+
+Clusters 2 and 4 present the anomaly cases where people can have high physical well being but poor mental health.
+
+Cluster 2 could represent the professional workers who find their work fulfilling even if they don't have time or energy to take care of their body.
+
+Cluster 4 could represent high performing athletes who may be obsessed with winning or their own ego. Perhaps could also apply to athletes who lose/fail and don't get over it.
+
+These clusters would be important for medical professionals to pick up on depending on what their priority is. If their priority is for successful results to show off in marketing then they would want to have the people with high physical and mental well being (cluster 3). If their priority is to make sure that their drug works regardless or mental and physical well being then they may want to focus on the people with low mental well being and/or physical well being.
+
+## Q4 - Education vs HeartDiseaseorAttack
+
+```{r}
+set.seed(123)
+
+kclust = 
+  balanced_diabetes_data  %>%
+  select(Education
+, HeartDiseaseorAttack
+
+
+) %>%
+  kmeans(centers = 3) 
+
+tidy(kclust)
+```
+
+```{r}
+set.seed(123)
+
+augment(kclust, balanced_diabetes_data) %>%
+  ggplot() +
+  geom_point(aes(x=Education, y=HeartDiseaseorAttack
+
+, color=.cluster), alpha=0.6) +
+  geom_point(data = tidy(kclust), aes(x=Education, y=HeartDiseaseorAttack
+
+), size = 8, shape = "x")
+
+```
+
+The 3 clusters highlighted by K means are as follows:
+
+Cluster 1 (red) refers to the highly educated who have either a high or low likelihood of heart disease or attack.
+
+Cluster 2 ( green) refers to the people with moderate education and moderate chance of getting heart disease or attack.
+
+Cluster 3 (blue) shows the people with low education and low chance of heart disease or attack.
+
+Based of the data alone it can't be judged whether education level has an influence on heart disease or attack. This makes sense because if someone is highly educated it could be argued that they would also have enough money to look after their lifestyle. On the other hand they may end up with a high stress job that affects their heart. It wouold be more useful to compare with factors like occupation or diet.
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+This code thats been commented out was taking too long to run. Its purpose was for me to plot many version with different clusters and to plot the elbow graph. The elbow graph would have told me how many clusters to use by looking at the point where the drop off in variance is starting to be less and less noticeable (the pointy part). This process of finding the appropriate number of centroids is analogous to fitting supervised machine learning models.
+
+```{r}
+# #Multiple Cluster Plots and Elbow plot to determine suitable number of clusters
+# 
+# kclusts <- 
+#   tibble(k = 1:5) %>%
+#   mutate(
+#     kclust = map(k, ~kmeans(select(balanced_diabetes_data, MentHlth, PhysHlth), .x)),
+#     tidied = map(kclust, tidy),
+#     glanced = map(kclust, glance),
+#     augmented = map(kclust, augment, balanced_diabetes_data)
+#   )
+# 
+# clusters <- 
+#   kclusts %>%
+#   unnest(cols = c(tidied))
+# 
+# assignments <- 
+#   kclusts %>% 
+#   unnest(cols = c(augmented))
+# 
+# clusterings <- 
+#   kclusts %>%
+#   unnest(cols = c(glanced))
+```
+
+```{r}
+
+# ggplot(assignments, aes(x = MentHlth, y = PhysHlth)) +
+#   geom_point(aes(color = .cluster), alpha = 0.7) + 
+#   facet_wrap(~ k) +
+#   geom_point(data = clusters, size = 4, shape = "x")
+```
+
+```{r}
+# ggplot(clusterings, aes(k, tot.withinss)) +
+#   geom_line(color="red",alpha=0.5,linewidth=1) +
+#   geom_point(color="red",size=4)+
+#   theme_grey(base_size = 15)
+```
+
+```{r}
+
+```
+
+```{r}
+
+
+```
+
+```{r}
+
+```
+
+# Part 3
+
+## Q5 - EDA
+
+This section will focus on textual analysis of the drugs reviews and will mainly start from the LDA section onwards. This EDA section was just for me to reach the data and get a big picture sense of what its about.
+
+The research question will be expanded on more after the exploration but this is what it is. Research Question: Can market gaps be spotted by viewing sentiment around the current available drugs for particular conditions (e.g Migraine Prevention's)?
+
+My approach here is to find the sentiment of the reviews specific to all drugs used for Migraine Prevention. I will then perform topic and conceptual modelling on these reviews using LDA (Latent Dirichlet Allocation) and LSA (Latent Semantic Analysis) respectively. I will consider there to be a gap in the market if there is negative sentiment around current forms of prevention. Topic and conceptual modelling should enable me to understand what the specific details of the complaints are, as well as any nuance in the treatments.
+
+```{r}
+
+
+
+drug_rev_train <- read.csv("C:/Users/David Moraes/Downloads/drug_review_dataset/drugsComTrain_raw.tsv", sep = "\t")
+
+drug_rev_test <- read.csv("C:/Users/David Moraes/Downloads/drug_review_dataset/drugsComTest_raw.tsv", sep = "\t")
+
+head(drug_rev_train)
+head(drug_rev_test)
+```
+
+```{r}
+
+
+# Creating a corpus
+corpus <- corpus(drug_rev_train$review)
+
+# Viewing the corpus
+head(corpus)
+summary(corpus)
+```
+
+```{r}
+
+# Tokenizing the corpus
+tokens <- tokens(corpus)
+
+# Viewing the tokens
+head(tokens)
+
+```
+
+```{r}
+# Creating a DFM
+dfm <- dfm(tokens)
+
+# Viewing the DFM
+dfm
+
+```
+
+This will be redone for LDA and sentiment analysis.
+
+```{r}
+# Lowercasing and removing punctuation
+tokens_clean <- tokens(corpus, 
+                       what = "word", 
+                       remove_punct = TRUE) %>% 
+                tokens_tolower()
+
+# Removing stopwords
+tokens_clean <- tokens_select(tokens_clean, 
+                              pattern = stopwords("en"), 
+                              selection = "remove")
+
+# Stemming
+tokens_stemmed <- tokens_wordstem(tokens_clean, language = "english")
+
+# Creating a DFM from cleaned and stemmed tokens
+dfm_clean <- dfm(tokens_stemmed)
+
+# Viewing the cleaned DFM
+dfm_clean
+
+```
+
+```{r}
+# Top features
+topfeatures(dfm_clean, n = 25)
+
+```
+
+```{r}
+# Wordcloud
+library(quanteda.textplots)
+textplot_wordcloud(dfm_clean, min_count = 1, max_words = 100)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## Q5 - Sentiment Analysis
+
+Here onwards I begin sentiment analysis using the dictionary AFINN to gather my list of positive and negative words. These words also have a respective positive and negative score which I could use to compare reviews to see which are relatively more negative or positive than others. Doing so could allow me to find my competitors in the drug market and tell me who I don't need to worry about.
+
+```{r}
+AFINN <- get_sentiments("afinn")
+
+AFINN
+```
+
+```{r}
+
+
+```
+
+```{r}
+# Concatenate the text from 'drugName', 'condition', and 'review' columns
+text_data <- paste(drug_rev_train$drugName, drug_rev_train$condition, drug_rev_train$review, sep = " ")
+
+# Create a corpus
+corpus_sentiment <- corpus(text_data)
+```
+
+```{r}
+# Extract the words and their corresponding sentiment scores
+afinn_words <- AFINN$word
+afinn_scores <- AFINN$value
+
+# Split the words based on sentiment scores
+positive_words <- afinn_words[afinn_scores > 0]
+negative_words <- afinn_words[afinn_scores < 0]
+
+# Print the lists
+print("Positive words:")
+head(positive_words)
+
+print("Negative words:")
+head(negative_words)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## Q5 - Overall sentiment across training data
+
+```{r}
+
+
+# Tokenization and cleaning
+tokens <- tokens(corpus_sentiment, remove_punct = TRUE) %>%
+          tokens_tolower() %>%
+          tokens_select(pattern = stopwords("en"), selection = "remove") %>%
+          tokens_wordstem(language = "english")
+
+# Creating a DFM
+dfm_clean <- dfm(tokens)
+
+# Load a sentiment dictionary
+data_dictionary_LSD2015 <- dictionary(list(
+  positive = positive_words,
+  negative = negative_words
+))
+
+# Apply the dictionary using dfm_lookup
+dfm_sentiment <- dfm_lookup(dfm_clean, dictionary = data_dictionary_LSD2015)
+
+# Viewing the sentiment analysis result
+print(dfm_sentiment)
+
+
+```
+
+## Q5 - Research Question: Can market gaps be spotted by viewing sentiment around the current available drugs for particular conditions (e.g Migraine Preventions)?
+
+```{r}
+# Create a dataframe
+drug_sentiment <- data.frame(drugName = drug_rev_train$drugName,
+                               condition = drug_rev_train$condition,
+                               review = drug_rev_train$review)
+
+# Optionally, you can convert the 'review' column to character type
+drug_sentiment$review <- as.character(drug_sentiment$review)
+
+library(tibble)
+
+# Convert to tibble
+drug_sentiment <- as_tibble(drug_sentiment)
+
+# View the dataframe
+head(drug_sentiment)
+
+# Filter the dataframe for reviews with the condition "migraine prevention"
+subset_reviews <- subset(drug_sentiment, condition == "Migraine Prevention")
+
+head(subset_reviews)
+```
+
+```{r}
+
+
+# Tokenization and cleaning
+tokens <- tokens(subset_reviews$review, remove_punct = TRUE) %>%
+          tokens_tolower() %>%
+          tokens_select(pattern = stopwords("en"), selection = "remove") %>%
+          tokens_wordstem(language = "english")
+
+# Creating a DFM
+dfm_clean <- dfm(tokens)
+
+# Load a sentiment dictionary
+data_dictionary_LSD2015 <- dictionary(list(
+  positive = positive_words,
+  negative = negative_words
+))
+
+# Apply the dictionary using dfm_lookup
+dfm_sentiment_migraine <- dfm_lookup(dfm_clean, dictionary = data_dictionary_LSD2015)
+
+# Viewing the sentiment analysis result
+print(dfm_sentiment_migraine)
+
+
+
+```
+
+```{r}
+library(ggplot2)
+```
+
+```{r}
+
+```
+
+```{r}
+# Convert dfm_sentiment_migraine to a data frame for plotting
+dfm_df <- convert(dfm_sentiment_migraine, to = "data.frame")
+
+# Reshape the data for plotting
+dfm_df_long <- tidyr::pivot_longer(dfm_df, cols = c("positive", "negative"), names_to = "Sentiment", values_to = "Frequency")
+
+# Plotting the sentiment analysis results
+ggplot(dfm_df_long, aes(x = Sentiment, y = Frequency, fill = Sentiment)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Sentiment", y = "Frequency", fill = "Sentiment", title = "Sentiment Analysis Results") +
+  scale_fill_manual(values = c("Positive" = "green", "Negative" = "red")) +
+  theme_minimal()
+```
+
+```{r}
+
+```
+
+It could be argued that there is still a gap in the market for migraine prevention treatments. In general sentiment from is about 50/50 with negative experiences taking precedence. This will be corroborated later when we see how LSA also reveals a negative sentiment pervasive throughout the drug reviews associated with migraine prevention.
+
+Also, we will see from LDA, that most treatments for migraines were not actually originally intended for migraines and were simply a positive byproduct of some other condition. This suggests that there is not alot of research and development in the migraine medical market despite 40% of the population suffering from headache disorders (which includes migraines).
+
+```{r}
+
+```
+
+```{r}
+
+corpus_migraine <- corpus(subset_reviews$review)
+
+# Sample a subset of the corpus for migraine prevention reviews
+sample_size <- 100  # Adjust as needed
+corpus_subset <- corpus_migraine[sample(seq_len(ndoc(corpus_migraine)), size = sample_size)]
+
+head(corpus_subset)
+
+
+
+```
+
+```{r}
+
+# Tokenization and cleaning
+tokens <- tokens(corpus_subset, remove_punct = TRUE) %>%
+          tokens_tolower() %>%
+          tokens_select(pattern = stopwords("en"), selection = "remove") %>%
+          tokens_wordstem(language = "english")
+
+# Creating bigrams (n-grams with n = 2)
+tokens_bigrams <- tokens_ngrams(tokens, n = 2)
+
+# Viewing bigrams
+head(tokens_bigrams)
+```
+
+## 
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## Q5 - LDA
+
+My hope with LDA would be to find major themes in the reviews. This could alert me to tolerable or intolerable side effects, which drugs are the main ones being used (from my sample of data) and perhaps what general life experience is like for migraine sufferers. Understanding all this would give a company the information it needs to craft and market a medicine that appeals to migraine sufferers.
+
+```{r}
+
+library(topicmodels)
+library(tm)
+
+
+# Define your custom list of stop words
+custom_stopwords <- c("#039", "year", "month", "day", "s", "effect", "take", "t", "m", 
+  "start", "like", "work", "also", "just", "much", "ve", "now", "tri", 
+  "feel", "time", "get", "side", "pain", "help", "go", "3", "pill", 
+  "use", "week", "2", "doctor", "medic", "will", "can", "quot", "sinc", 
+  "went", "first", "one", "night", "ve", "now", "tri", "feel", "time", "month", "take", "get", "year", 
+  "took", "take", "work", "help", "go", "3", "pill", "day", "use", 
+  "week", "2", "doctor", "medic", "will", "can", "got", "month", 
+  "effect", "went", "first", "one", "year" )  # Add your stop words here
+
+# Combine custom stop words with default stop words
+all_stopwords <- c(stopwords("en"), custom_stopwords)
+
+
+# Tokenization and cleaning
+tokens_clean <- tokens(corpus_subset, remove_punct = TRUE) %>%
+                tokens_tolower() %>%
+                tokens_select(pattern = all_stopwords, selection = "remove") %>%
+                tokens_wordstem(language = "english")
+
+# Creating a DFM
+dfm_clean <- dfm(tokens_clean)
+
+# Removing sparse terms
+dfm_clean <- dfm_trim(dfm_clean, min_termfreq = 1, min_docfreq = 1)
+
+# Converting DFM to a Document-Term Matrix
+dtm <- as.DocumentTermMatrix(dfm_clean, weighting = weightTf)
+
+# Fitting the LDA model with 2 topics
+lda_model <- LDA(dtm, k = 5, control = list(seed = 1234))
+
+# Getting the terms associated with topics
+top_terms <- terms(lda_model, 10)  # Get top 5 terms for each topic
+
+# Getting the topic distribution for each document
+doc_topics <- topics(lda_model)  # Get the most likely topic for each document
+
+# Getting the topic probabilities for each document
+topic_probabilities <- posterior(lda_model)$topics
+
+# Viewing the results
+head(top_terms)
+head(doc_topics)
+head(topic_probabilities)
+
+
+```
+
+LDA is an unsupervised learning method to model the topics in documents you feed it. A limitation is that you have to specify how many topics you want it to identify. It wont tell you the total number of topics in a document or what they all are. That could be done with further analysis using LSA. LDA is similar to PCA in the sense that it also reduces the dimensionality of text data.
+
+So far the results have the following 5 themes:
+
+1.  Migraine Duration and its relation to Botox treatment. I know there was some evidence of botox treating migraines, at least the ones that were in part caused by scalp tension.
+2.  Topamax and weight issues. Its a seizure medication thats also used to prevent migraines with the side effect of harder to control weight.
+3.  How effective Topamax is for preventing migraines?
+4.  Long term experience with Topamax for migraines
+5.  Seems to be similar to 4
+
+To summarise these themes into 2 categories its migraines (1) and their prevention's (2). Just looking at the words, some things that could be inferred are duration of efficacy or how long migraines last. Possible side effects of the preventative drugs or simply symptoms of migraines. Finally, which preventative treatments standout from whats currently available on the market.
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## Q5 - LSA
+
+With LSA we can model the concepts in the reviews after removing typical stop words and speific ones that seem to appear in drug reviews.
+
+```{r}
+library(quanteda)
+library(text2vec)
+```
+
+```{r}
+
+
+
+# Preprocess and tokenize text using text2vec
+tokens <- tokens(corpus_subset, remove_punct = TRUE) %>%
+          tokens_tolower() %>%
+          tokens_select(pattern = stopwords("en"), selection = "remove") %>%
+          tokens_wordstem(language = "english")
+
+# Convert tokens to a list of character vectors
+tokens_list <- as.list(tokens)
+
+# Create an iterator over tokens
+it <- itoken(tokens_list, progressbar = FALSE)
+
+# Create vocabulary
+vocab <- create_vocabulary(it)
+
+# Create a document-term matrix
+vectorizer <- vocab_vectorizer(vocab)
+dtm <- create_dtm(it, vectorizer)
+
+# Perform LSA
+lsa_model <- LSA$new(n_topics = 5)
+doc_topic_matrix <- lsa_model$fit_transform(dtm)
+
+# Print the topic-term matrix and document-topic matrix
+View(lsa_model$components)  # Topic-term matrix
+
+```
+
+```{r}
+View(doc_topic_matrix)  # Document-topic matrix
+```
+
+```{r}
+
+```
+
+Interpretation of LSA results:
+
+LSA helps to analyse the relation between words in a document or topic. It's like a zoomed in version of LDA for topic modelling. LSA gives some insight into the common words and themes that are consistent among the reviews of the migraine prevention group of reviews. From the columns above 3 general categories can be seen.
+
+The first is medical dosages and timings. This is evident from the following words: 105, 12.5mg, 15-20, 150, 188.00, 2009, 20lbs, 20mg, 250, 2x, 3-6, 400, 40mg, 500, 5day, 600, 6mos.
+
+The second focuses on side effects and patient reactions from the drugs. We see the following words: abdomin, addict, anger, anxious, bladder, bottl, botul, breath, calm, cramp, diarrhea, discomfort, drowsi, effexor, feverfew, healthi, headaches-i.
+
+Finally we see the emotional states of the patients through words like anxious, anger, calm, confus, depress, dream, feel, happy, mood, nervous, panic, sad, tire, worri. This actually confirms what we saw earlier, there was negative sentiment among patients who took drugs for migraine prevention. Perhaps I could have continued this by seeing if there was any correlation between dosage amounts and side effects.
+
+For the document topic matrix:
+
+The matrix doesn't show what the specific topic titles were but I think I could have found that out by finding a few words for each topic and manually giving each topic a name myself. Regardless some things I can generally observe from the matrix is that many texts have negative weights for many topics. That suggests they don't really have anything to do with the topics. Topics 3 and 5 seemed to have the most positive weights so I would be interested in checking out their titles for further analysis.
+
+Collectively the understanding of sentiment, nuance of situation and understanding of customer could enable a pharmaceutical company to make a migraine prevention drug that can beat the current ones in the market. The same textual analysis could be applied to a larger data set than the training data set so gather more insight and analysis. What I did was intended to demonstrate the possible insights from quick textual analysis (within the time constraint)
+
+```{r}
+
+```
